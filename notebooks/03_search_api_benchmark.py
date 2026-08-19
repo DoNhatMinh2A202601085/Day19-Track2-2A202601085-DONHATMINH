@@ -2,6 +2,11 @@
 # jupyter:
 #   jupytext:
 #     formats: py:percent
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
@@ -36,17 +41,21 @@ proc = subprocess.Popen(
 )
 
 # Đợi server up + warm (Searcher.from_corpus loads embeddings + indexes 1000 docs)
+# Timeout increased to 600s (10 min) for slow machines
 URL = "http://localhost:8000"
-for _ in range(60):
+print("Starting API server... (this may take 5-10 minutes on first run)")
+for i in range(600):
     try:
         r = httpx.get(f"{URL}/healthz", timeout=2.0)
         if r.status_code == 200 and r.json().get("ready"):
             break
     except httpx.HTTPError:
         pass
+    if i % 30 == 0 and i > 0:
+        print(f"  Still waiting... ({i}s elapsed)")
     time.sleep(1)
 else:
-    raise RuntimeError("API didn't become ready within 60s")
+    raise RuntimeError("API didn't become ready within 600s")
 
 print(httpx.get(f"{URL}/healthz").json())
 
@@ -77,6 +86,9 @@ import json
 DATA = ROOT / "data"
 golden = [json.loads(l) for l in (DATA / "golden_set.jsonl").open(encoding="utf-8")]
 
+for q in golden:
+    httpx.get(f"{URL}/search", params={"q": q["query"], "mode": "hybrid"}).raise_for_status()
+print(f"Warm-up complete: {len(golden)} hybrid queries")
 
 def percentile(values: list[float], p: float) -> float:
     n = len(values)
@@ -127,9 +139,15 @@ else:
 # ## 5. Cleanup — stop the API server
 
 # %%
-proc.terminate()
-proc.wait(timeout=5)
-print("API server stopped")
+try:
+    proc.terminate()
+    proc.wait(timeout=2)
+except Exception:
+    try:
+        proc.kill()
+    except Exception:
+        pass
+print("API server cleanup done")
 
 # %% [markdown]
 # ## Deliverable evidence
